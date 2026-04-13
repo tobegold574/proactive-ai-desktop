@@ -1,0 +1,313 @@
+import { app, BrowserWindow, ipcMain, Menu } from 'electron'
+import path from 'path'
+import { ChatCore } from './chat-core'
+import { configStore } from './config-store'
+import { templateStore } from './template-store'
+import { conversationStore } from './conversation-store'
+import { messageStore } from './message-store'
+import {
+  GlobalSettings,
+  Conversation,
+  ChatMessage,
+  AIResponse,
+  PromptTemplate,
+} from '../shared/types'
+
+let mainWindow: BrowserWindow | null = null
+let chatCore: ChatCore | null = null
+
+const WINDOW_TITLE = 'ProactiveAI'
+
+const DEFAULT_CONVERSATION_TITLE = '新对话'
+
+function titleFromFirstUserMessage(text: string, maxLen = 42): string {
+  const normalized = text.replace(/\s+/g, ' ').trim()
+  if (!normalized) return DEFAULT_CONVERSATION_TITLE
+  if (normalized.length <= maxLen) return normalized
+  return normalized.slice(0, maxLen).trimEnd() + '…'
+}
+
+function createWindow() {
+  mainWindow = new BrowserWindow({
+    width: 1200,
+    height: 800,
+    minWidth: 800,
+    minHeight: 600,
+    title: WINDOW_TITLE,
+    frame: false,
+    ...(process.platform === 'darwin'
+      ? {
+          titleBarStyle: 'hidden' as const,
+          trafficLightPosition: { x: 12, y: 14 },
+        }
+      : {}),
+    webPreferences: {
+      preload: path.join(__dirname, '../preload/index.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  })
+
+  if (process.env.ELECTRON_RENDERER_URL) {
+    mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
+    mainWindow.webContents.openDevTools()
+  } else {
+    mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'))
+  }
+
+  mainWindow.on('closed', () => {
+    mainWindow = null
+  })
+}
+
+app.whenReady().then(() => {
+  if (process.platform === 'darwin') {
+    app.setName(WINDOW_TITLE)
+  }
+  Menu.setApplicationMenu(null)
+  templateStore.init()
+  chatCore = new ChatCore()
+  createWindow()
+  setupIPC()
+
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) {
+      createWindow()
+    }
+  })
+})
+
+app.on('window-all-closed', () => {
+  if (process.platform !== 'darwin') {
+    app.quit()
+  }
+})
+
+function setupIPC() {
+  ipcMain.handle('window:minimize', () => {
+    mainWindow?.minimize()
+  })
+  ipcMain.handle('window:maximize-toggle', () => {
+    if (!mainWindow) return
+    if (mainWindow.isMaximized()) {
+      mainWindow.unmaximize()
+    } else {
+      mainWindow.maximize()
+    }
+  })
+  ipcMain.handle('window:close', () => {
+    mainWindow?.close()
+  })
+
+  ipcMain.handle(
+    'chat:send',
+    async (
+      event,
+      message: string,
+      history: ChatMessage[],
+      importantInfo: string[],
+      conversationId?: string
+    ): Promise<AIResponse> => {
+      if (!chatCore) {
+        throw new Error('ChatCore not initialized')
+      }
+
+      const config = configStore.get()
+      let conversationSettings: Conversation['settings'] = undefined
+
+      if (conversationId) {
+        const conversation = await conversationStore.get(conversationId)
+        if (conversation) {
+          conversationSettings = conversation.settings
+        }
+      }
+
+      const templateName =
+        conversationSettings?.templateName || config.defaultTemplateName
+      const template = templateStore.get(templateName || '默认助手')
+      const rolePrompt = template?.rolePrompt || '你是一个主动的AI助手。'
+
+      if (conversationId) {
+        const prior = messageStore.getByConversation(conversationId)
+        const conv = await conversationStore.get(conversationId)
+        if (
+          prior.length === 0 &&
+          conv &&
+          conv.title === DEFAULT_CONVERSATION_TITLE
+        ) {
+          await conversationStore.update(conversationId, {
+            title: titleFromFirstUserMessage(message),
+          })
+        }
+
+        // 立即把用户消息落盘，避免渲染层拉取时拿到空列表覆盖“乐观消息”
+        const userMessage: ChatMessage = {
+          id: `msg_${Date.now()}`,
+          role: 'user',
+          content: message,
+          createdAt: Date.now(),
+        }
+        messageStore.add(conversationId, userMessage)
+      }
+
+      const response = await chatCore.sendMessage(
+        message,
+        history,
+        importantInfo,
+        config,
+        conversationSettings,
+        rolePrompt
+      )
+
+      if (conversationId) {
+        const assistantMessage: ChatMessage = {
+          id: `msg_${Date.now() + 1}`,
+          role: 'assistant',
+          content: response.reply,
+          createdAt: Date.now(),
+        }
+        messageStore.add(conversationId, assistantMessage)
+
+        // Merge AI-extracted important info into conversation memory (session-level).
+        const newMemory = (response.important_info || []).filter(Boolean)
+        if (newMemory.length > 0) {
+          const conversation = await conversationStore.get(conversationId)
+          if (conversation) {
+            const existing = conversation.memory || []
+            const merged = Array.from(new Set([...existing, ...newMemory]))
+            await conversationStore.update(conversationId, { memory: merged })
+          }
+        }
+      }
+
+      return response
+    }
+  )
+
+  ipcMain.handle('config:get', async (): Promise<GlobalSettings> => {
+    return configStore.get()
+  })
+
+  ipcMain.handle(
+    'config:set',
+    async (event, config: GlobalSettings): Promise<boolean> => {
+      configStore.set(config)
+      return true
+    }
+  )
+
+  ipcMain.handle(
+    'config:validate',
+    async (event, config: GlobalSettings): Promise<boolean> => {
+      if (!chatCore) {
+        throw new Error('ChatCore not initialized')
+      }
+      return await chatCore.validateConfig(config)
+    }
+  )
+
+  ipcMain.handle('templates:list', async (): Promise<PromptTemplate[]> => {
+    return templateStore.getAll()
+  })
+
+  ipcMain.handle(
+    'templates:create',
+    async (
+      event,
+      template: Omit<PromptTemplate, 'id' | 'createdAt' | 'updatedAt'>
+    ): Promise<PromptTemplate> => {
+      return templateStore.create(template)
+    }
+  )
+
+  ipcMain.handle(
+    'templates:update',
+    async (
+      event,
+      id: string,
+      updates: Partial<PromptTemplate>
+    ): Promise<boolean> => {
+      templateStore.update(id, updates)
+      return true
+    }
+  )
+
+  ipcMain.handle(
+    'templates:delete',
+    async (event, id: string): Promise<boolean> => {
+      return templateStore.delete(id)
+    }
+  )
+
+  ipcMain.handle('conversations:list', async (): Promise<Conversation[]> => {
+    return await conversationStore.getAll()
+  })
+
+  ipcMain.handle(
+    'conversations:get',
+    async (event, id: string): Promise<Conversation | undefined> => {
+      return await conversationStore.get(id)
+    }
+  )
+
+  ipcMain.handle(
+    'conversations:create',
+    async (event, title?: string): Promise<Conversation> => {
+      return await conversationStore.create(title)
+    }
+  )
+
+  ipcMain.handle(
+    'conversations:update',
+    async (
+      event,
+      id: string,
+      updates: Partial<Conversation>
+    ): Promise<boolean> => {
+      await conversationStore.update(id, updates)
+      return true
+    }
+  )
+
+  ipcMain.handle(
+    'conversations:delete',
+    async (event, id: string): Promise<boolean> => {
+      await conversationStore.delete(id)
+      messageStore.clear(id)
+      return true
+    }
+  )
+
+  ipcMain.handle(
+    'messages:list',
+    async (event, conversationId: string): Promise<ChatMessage[]> => {
+      return messageStore.getByConversation(conversationId)
+    }
+  )
+
+  ipcMain.handle(
+    'messages:clear',
+    async (event, conversationId: string): Promise<boolean> => {
+      messageStore.clear(conversationId)
+      return true
+    }
+  )
+
+  ipcMain.handle(
+    'memory:list',
+    async (event, conversationId: string): Promise<string[]> => {
+      const conversation = await conversationStore.get(conversationId)
+      return conversation?.memory || []
+    }
+  )
+
+  ipcMain.handle(
+    'memory:clear',
+    async (event, conversationId: string): Promise<boolean> => {
+      const conversation = await conversationStore.get(conversationId)
+      if (!conversation) return false
+      await conversationStore.update(conversationId, { memory: [] })
+      return true
+    }
+  )
+}
