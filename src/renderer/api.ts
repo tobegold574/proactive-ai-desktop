@@ -1,4 +1,11 @@
-import { ChatMessage, UserConfig, ChatResponse, GlobalSettings, PromptTemplate, Conversation } from '@shared'
+import {
+  ChatMessage,
+  UserConfig,
+  ChatResponse,
+  GlobalSettings,
+  PromptTemplate,
+  Conversation,
+} from '@shared'
 
 declare global {
   interface Window {

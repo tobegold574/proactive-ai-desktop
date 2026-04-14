@@ -1,7 +1,12 @@
 import { X, Check, Loader2, Trash2 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { useConfigStore } from '@/stores/configStore'
-import { GlobalSettings, UserSettings, PromptTemplate } from '@shared'
+import {
+  GlobalSettings,
+  PromptTemplate,
+  migrateTemplateRef,
+  DEFAULT_TEMPLATE_NAME,
+} from '@shared'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -18,7 +23,11 @@ import {
 } from '@/api'
 import { useConversationStore } from '@/stores/conversationStore'
 
-/** 配置里可能存的是内置 key（如 default），而模板列表用展示名（如「默认助手」） */
+function builtinKeyFromId(id: string): string {
+  return id.replace(/^builtin_/, '')
+}
+
+/** 配置存 builtin id、旧 key或自定义名称 */
 function resolveTemplateSelectValue(
   stored: string | undefined,
   templates: PromptTemplate[]
@@ -258,6 +267,26 @@ export default function Settings({ onClose }: { onClose: () => void }) {
           )}
 
           <div className="space-y-6">
+            <section className="space-y-3 rounded-xl border border-[color:var(--app-border-strong)] bg-[var(--app-subtle-section)] p-4">
+              <div className="space-y-2">
+                <Label className="text-[var(--app-fg)]">{t('settings.language')}</Label>
+                <Select
+                  value={config.locale ?? 'zh-CN'}
+                  onValueChange={(value) =>
+                    handleUpdateGlobal('locale', value as GlobalSettings['locale'])
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent position="popper" sideOffset={6} align="start">
+                    <SelectItem value="zh-CN">{t('settings.langZh')}</SelectItem>
+                    <SelectItem value="en-US">{t('settings.langEn')}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </section>
+
             <section className="space-y-3 rounded-xl border border-[color:var(--app-border-strong)] bg-[var(--app-subtle-section)] p-4">
               <div className="flex items-center justify-between gap-2">
                 <Label className="text-[var(--app-fg)]">本会话记忆</Label>
