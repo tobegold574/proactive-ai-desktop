@@ -4,6 +4,7 @@ import {
   AIResponse,
   GlobalSettings,
   ConversationSettings,
+  Trigger,
 } from '../shared/types'
 import {
   DEFAULT_BASE_URL,
@@ -143,42 +144,92 @@ export class ChatCore {
     }
     resultText = resultText.trim()
 
-    const safeParse = (text: string): any => {
-      // 1) 直接解析
+    return this.parseModelContentToResponse(
+      resultText,
+      settings.proactiveInterval || DEFAULT_PROACTIVE_INTERVAL
+    )
+  }
+
+  /**
+   * 将模型输出解析为 AIResponse。模型可能返回纯自然语言、带前缀的 JSON、或畸形结构；
+   * 任意解析失败时降级为整段原文作为 reply，不向调用方抛 JSON异常。
+   */
+  private parseModelContentToResponse(
+    resultText: string,
+    fallbackInterval: number
+  ): AIResponse {
+    const fallback = (): AIResponse => ({
+      reply: resultText,
+      triggers: [],
+      next_api_call_seconds: fallbackInterval,
+      important_info: [],
+    })
+
+    const tryParseJson = (text: string): unknown => {
       try {
         return JSON.parse(text)
-      } catch {}
-      // 2) 提取第一段 {...}（模型偶发输出解释文字）
+      } catch {
+        /* ignore */
+      }
       const start = text.indexOf('{')
       const end = text.lastIndexOf('}')
-      if (start !== -1 && end !== -1 && end > start) {
-        const slice = text.slice(start, end + 1)
-        try {
-          return JSON.parse(slice)
-        } catch {}
+      if (start === -1 || end === -1 || end <= start) return null
+      try {
+        return JSON.parse(text.slice(start, end + 1))
+      } catch {
+        return null
       }
-      return null
     }
 
-    const result = safeParse(resultText)
-    if (!result) {
-      // 降级：不阻断对话（避免 “Unexpected token … is not valid JSON”）
-      return {
-        reply: resultText,
-        triggers: [],
-        next_api_call_seconds: settings.proactiveInterval || DEFAULT_PROACTIVE_INTERVAL,
-        important_info: [],
+    const raw = tryParseJson(resultText)
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+      return fallback()
+    }
+
+    const o = raw as Record<string, unknown>
+
+    let reply = ''
+    if (typeof o.reply === 'string') {
+      reply = o.reply
+    } else if (o.reply != null) {
+      reply = String(o.reply)
+    }
+
+    const triggers: Trigger[] = []
+    if (Array.isArray(o.triggers)) {
+      for (const t of o.triggers) {
+        if (
+          t !== null &&
+          typeof t === 'object' &&
+          !Array.isArray(t) &&
+          typeof (t as Trigger).seconds === 'number' &&
+          typeof (t as Trigger).message === 'string'
+        ) {
+          triggers.push({
+            seconds: (t as Trigger).seconds,
+            message: (t as Trigger).message,
+          })
+        }
       }
     }
+
+    const important_info = Array.isArray(o.important_info)
+      ? o.important_info.filter((x): x is string => typeof x === 'string')
+      : []
+
+    const nextRaw = o.next_api_call_seconds
+    const next_api_call_seconds =
+      typeof nextRaw === 'number' &&
+      Number.isFinite(nextRaw) &&
+      nextRaw > 0
+        ? Math.floor(nextRaw)
+        : fallbackInterval
 
     return {
-      reply: result.reply || '',
-      triggers: result.triggers || [],
-      next_api_call_seconds:
-        result.next_api_call_seconds ||
-        settings.proactiveInterval ||
-        DEFAULT_PROACTIVE_INTERVAL,
-      important_info: result.important_info || [],
+      reply,
+      triggers,
+      next_api_call_seconds,
+      important_info,
     }
   }
 
