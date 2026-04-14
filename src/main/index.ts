@@ -12,17 +12,21 @@ import {
   AIResponse,
   PromptTemplate,
 } from '../shared/types'
+import { normalizeLocale, isDefaultConversationTitle, defaultConversationTitle } from '../shared/locale'
+import { getBuiltinRolePrompt, getFallbackRolePrompt } from '../shared/prompt-i18n'
 
 let mainWindow: BrowserWindow | null = null
 let chatCore: ChatCore | null = null
 
 const WINDOW_TITLE = 'ProactiveAI'
 
-const DEFAULT_CONVERSATION_TITLE = '新对话'
-
-function titleFromFirstUserMessage(text: string, maxLen = 42): string {
+function titleFromFirstUserMessage(
+  text: string,
+  locale: ReturnType<typeof normalizeLocale>,
+  maxLen = 42
+): string {
   const normalized = text.replace(/\s+/g, ' ').trim()
-  if (!normalized) return DEFAULT_CONVERSATION_TITLE
+  if (!normalized) return defaultConversationTitle(locale)
   if (normalized.length <= maxLen) return normalized
   return normalized.slice(0, maxLen).trimEnd() + '…'
 }
@@ -113,6 +117,7 @@ function setupIPC() {
       }
 
       const config = configStore.get()
+      const locale = normalizeLocale(config.locale)
       let conversationSettings: Conversation['settings'] = undefined
 
       if (conversationId) {
@@ -122,10 +127,16 @@ function setupIPC() {
         }
       }
 
-      const templateName =
+      const templateRef =
         conversationSettings?.templateName || config.defaultTemplateName
-      const template = templateStore.get(templateName || '默认助手')
-      const rolePrompt = template?.rolePrompt || '你是一个主动的AI助手。'
+      const template = templateStore.resolveTemplate(templateRef)
+      let rolePrompt: string
+      if (template?.isBuiltIn && template.id.startsWith('builtin_')) {
+        const key = template.id.slice('builtin_'.length)
+        rolePrompt = getBuiltinRolePrompt(key, locale)
+      } else {
+        rolePrompt = template?.rolePrompt || getFallbackRolePrompt(locale)
+      }
 
       if (conversationId) {
         const prior = messageStore.getByConversation(conversationId)
@@ -133,10 +144,10 @@ function setupIPC() {
         if (
           prior.length === 0 &&
           conv &&
-          conv.title === DEFAULT_CONVERSATION_TITLE
+          isDefaultConversationTitle(conv.title)
         ) {
           await conversationStore.update(conversationId, {
-            title: titleFromFirstUserMessage(message),
+            title: titleFromFirstUserMessage(message, locale),
           })
         }
 
@@ -253,7 +264,12 @@ function setupIPC() {
   ipcMain.handle(
     'conversations:create',
     async (event, title?: string): Promise<Conversation> => {
-      return await conversationStore.create(title)
+      const cfg = configStore.get()
+      const initial =
+        title && title.length > 0
+          ? title
+          : defaultConversationTitle(normalizeLocale(cfg.locale))
+      return await conversationStore.create(initial)
     }
   )
 

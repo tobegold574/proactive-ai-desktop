@@ -39,6 +39,25 @@ class TemplateStore {
     return templates.find((t) => t.id === id)
   }
 
+  /** 支持 builtin id、旧版 key（如 default）、或自定义模板名称 */
+  resolveTemplate(ref: string | undefined): PromptTemplate | undefined {
+    const templates = this.getAll()
+    if (!ref) {
+      return (
+        templates.find((t) => t.id === 'builtin_default') ||
+        templates.find((t) => t.isBuiltIn)
+      )
+    }
+    const byId = templates.find((t) => t.id === ref)
+    if (byId) return byId
+    if (!ref.startsWith('builtin_')) {
+      const guessId = `builtin_${ref}`
+      const byGuess = templates.find((t) => t.id === guessId)
+      if (byGuess) return byGuess
+    }
+    return templates.find((t) => t.name === ref)
+  }
+
   create(
     template: Omit<PromptTemplate, 'id' | 'createdAt' | 'updatedAt'>
   ): PromptTemplate {

@@ -8,7 +8,7 @@ export const DEFAULT_PROACTIVE_INTERVAL = 60
 
 export const DEFAULT_PROACTIVE_ENABLED = true
 
-export const DEFAULT_TEMPLATE_NAME = "default"
+export const DEFAULT_TEMPLATE_NAME = "builtin_default"
 
 export const DEFAULT_THEME = "dark"
 

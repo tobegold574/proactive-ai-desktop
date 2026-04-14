@@ -1,5 +1,6 @@
 import { SendHorizontal } from 'lucide-react'
 import { useState, useEffect, useRef } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useConversationStore } from '@/stores/conversationStore'
 import { useChatStore } from '@/stores/chatStore'
 import { sendMessage, getConfig, getConversationMemory } from '@/api'
@@ -9,6 +10,7 @@ import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 
 export default function InputArea() {
+  const { t } = useTranslation()
   const [inputText, setInputText] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [config, setConfig] = useState<GlobalSettings | null>(null)
@@ -58,7 +60,7 @@ export default function InputArea() {
 
     try {
       if (!config?.apiKey) {
-        throw new Error('请先在设置中配置 API Key')
+        throw new Error(t('input.needApiKey'))
       }
 
       const currentMessages = messages[conversationId] || []
@@ -87,7 +89,7 @@ export default function InputArea() {
       addMessage(conversationId, {
         id: `msg_${Date.now() + 1}`,
         role: 'assistant',
-        content: `错误：${error instanceof Error ? error.message : '发送消息失败'}`,
+        content: `${t('input.errorPrefix')}${error instanceof Error ? error.message : t('input.sendFailed')}`,
         createdAt: Date.now(),
       })
     } finally {
@@ -130,7 +132,7 @@ export default function InputArea() {
         {nextInSeconds !== null && nextInSeconds > 0 && (
           <div className="mb-2 px-4">
             <div className="flex items-center justify-between rounded-full border border-[color:var(--app-countdown-border)] bg-[var(--app-countdown-bg)] px-4 py-2 text-xs text-[var(--app-muted)]">
-              <span>下一条主动消息</span>
+              <span>{t('input.nextProactive')}</span>
               <span className="tabular-nums">{nextInSeconds}s</span>
             </div>
           </div>
@@ -144,7 +146,7 @@ export default function InputArea() {
           <textarea
             ref={textareaRef}
             className="custom-scrollbar min-h-[44px] max-h-60 flex-1 resize-none border-none bg-transparent py-2 pl-1 pr-2 text-base text-[var(--app-fg)] outline-none placeholder:text-[var(--app-muted-fg)] focus:ring-0"
-            placeholder="在此输入提示词"
+            placeholder={t('input.placeholder')}
             rows={1}
             value={inputText}
             onChange={(e) => setInputText(e.target.value)}
@@ -156,7 +158,7 @@ export default function InputArea() {
             size="icon"
             onClick={handleSend}
             disabled={!inputText.trim() || isLoading}
-            aria-label="发送"
+            aria-label={t('input.send')}
             className={cn(
               'h-9 w-9 shrink-0 rounded-full transition-colors',
               isMultiline ? 'self-end' : 'self-center',
@@ -168,8 +170,8 @@ export default function InputArea() {
             <SendHorizontal size={18} strokeWidth={2} />
           </Button>
         </div>
-        <p className="mt-3 px-8 text-center text-[11px] text-[var(--app-muted)]">
-          ProactiveAI 可能会显示不准确的信息，包括有关人物的信息，因此请核实其回复。
+               <p className="mt-3 px-8 text-center text-[11px] text-[var(--app-muted)]">
+          {t('input.disclaimer')}
         </p>
       </div>
     </div>

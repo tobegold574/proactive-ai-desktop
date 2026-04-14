@@ -10,11 +10,14 @@ import {
   DEFAULT_THEME,
   DEFAULT_FONT_SIZE,
 } from '../shared/constants'
+import { DEFAULT_LOCALE } from '../shared/locale'
+import { migrateGlobalSettings } from '../shared/template-migration'
 
 const DEFAULT_CONFIG: GlobalSettings = {
   apiKey: '',
   model: DEFAULT_MODEL,
   baseURL: DEFAULT_BASE_URL,
+  locale: DEFAULT_LOCALE,
   defaultTemplateName: DEFAULT_TEMPLATE_NAME,
   defaultMaxTriggers: DEFAULT_MAX_TRIGGERS,
   defaultProactiveInterval: DEFAULT_PROACTIVE_INTERVAL,
@@ -34,12 +37,14 @@ class ConfigStore {
   }
 
   get(): GlobalSettings {
-    return (this.store as any).store
+    const raw = (this.store as any).store as GlobalSettings
+    return migrateGlobalSettings(raw)
   }
 
   set(config: GlobalSettings): void {
-    Object.keys(config).forEach(key => {
-      (this.store as any).set(key, config[key as keyof GlobalSettings])
+    const normalized = migrateGlobalSettings(config)
+    Object.keys(normalized).forEach(key => {
+      (this.store as any).set(key, normalized[key as keyof GlobalSettings])
     })
   }
 }

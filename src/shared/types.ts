@@ -2,6 +2,8 @@ export interface GlobalSettings {
   apiKey: string
   model: string
   baseURL?: string
+  /** 界面与下发给模型的系统提示语言 */
+  locale?: 'zh-CN' | 'en-US'
   defaultTemplateName?: string
   defaultMaxTriggers?: number
   defaultProactiveInterval?: number

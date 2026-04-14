@@ -1,13 +1,15 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import { GlobalSettings, DEFAULT_MODEL, DEFAULT_BASE_URL } from '@shared'
+import { GlobalSettings, DEFAULT_MODEL, DEFAULT_BASE_URL, DEFAULT_TEMPLATE_NAME } from '@shared'
 import { getConfig as getConfigAPI, saveConfig as saveConfigAPI, validateConfig as validateConfigAPI } from '../api'
+import { syncI18nFromConfig } from '../i18n'
 
 const DEFAULT_CONFIG: GlobalSettings = {
   apiKey: '',
   model: DEFAULT_MODEL,
   baseURL: DEFAULT_BASE_URL,
-  defaultTemplateName: 'default',
+  locale: 'zh-CN',
+  defaultTemplateName: DEFAULT_TEMPLATE_NAME,
   defaultMaxTriggers: 3,
   defaultProactiveInterval: 60,
   proactiveEnabled: true,
@@ -50,6 +52,7 @@ export const useConfigStore = create<ConfigStore>()(
         try {
           const config = await getConfigAPI()
           set({ config })
+          syncI18nFromConfig(config.locale)
           localStorage.setItem('proactive-config', JSON.stringify(config))
         } catch (error) {
           console.error('Failed to load config from main:', error)
@@ -59,9 +62,13 @@ export const useConfigStore = create<ConfigStore>()(
       },
 
       updateConfig: (newConfig) =>
-        set((state) => ({
-          config: { ...state.config, ...newConfig },
-        })),
+        set((state) => {
+          const config = { ...state.config, ...newConfig }
+          if (Object.prototype.hasOwnProperty.call(newConfig, 'locale')) {
+            syncI18nFromConfig(config.locale)
+          }
+          return { config }
+        }),
 
       setConfig: (config) => set({ config }),
 

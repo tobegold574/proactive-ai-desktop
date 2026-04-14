@@ -1,7 +1,8 @@
 import { X, Check, Loader2, Trash2 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useConfigStore } from '@/stores/configStore'
-import { GlobalSettings, UserSettings, PromptTemplate } from '@shared'
+import { GlobalSettings, PromptTemplate, migrateTemplateRef, DEFAULT_TEMPLATE_NAME } from '@shared'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -18,22 +19,30 @@ import {
 } from '@/api'
 import { useConversationStore } from '@/stores/conversationStore'
 
-/** 配置里可能存的是内置 key（如 default），而模板列表用展示名（如「默认助手」） */
+function builtinKeyFromId(id: string): string {
+  return id.replace(/^builtin_/, '')
+}
+
+/** 配置存 builtin id、旧 key或自定义名称 */
 function resolveTemplateSelectValue(
   stored: string | undefined,
   templates: PromptTemplate[]
 ): string {
   if (!templates.length) return ''
+  const migrated = migrateTemplateRef(stored)
+  const byMigrated = templates.find((t) => t.id === migrated)
+  if (byMigrated) return byMigrated.id
   if (stored) {
+    const byId = templates.find((t) => t.id === stored)
+    if (byId) return byId.id
     const byName = templates.find((t) => t.name === stored)
-    if (byName) return byName.name
-    const byBuiltinId = templates.find((t) => t.id === `builtin_${stored}`)
-    if (byBuiltinId) return byBuiltinId.name
+    if (byName) return byName.isBuiltIn ? byName.id : byName.name
   }
-  return templates[0]?.name ?? ''
+  return templates.find((t) => t.id === 'builtin_default')?.id ?? templates[0]?.id ?? ''
 }
 
 export default function Settings({ onClose }: { onClose: () => void }) {
+  const { t } = useTranslation()
   const { config, updateConfig, saveToMain, validateAndSave } = useConfigStore()
   const { currentConversationId } = useConversationStore()
   const [isSaving, setIsSaving] = useState(false)
@@ -95,10 +104,10 @@ export default function Settings({ onClose }: { onClose: () => void }) {
       if (success) {
         onClose()
       } else {
-        setMessage({ type: 'error', text: '保存失败' })
+        setMessage({ type: 'error', text: t('settings.saveFailed') })
       }
     } catch {
-      setMessage({ type: 'error', text: '保存失败' })
+      setMessage({ type: 'error', text: t('settings.saveFailed') })
     } finally {
       setIsSaving(false)
     }
@@ -112,10 +121,10 @@ export default function Settings({ onClose }: { onClose: () => void }) {
       if (success) {
         onClose()
       } else {
-        setMessage({ type: 'error', text: '配置验证失败' })
+        setMessage({ type: 'error', text: t('settings.validateFailed') })
       }
     } catch {
-      setMessage({ type: 'error', text: 'API 验证失败，请检查配置' })
+      setMessage({ type: 'error', text: t('settings.apiValidateFailed') })
     } finally {
       setIsValidating(false)
     }
@@ -143,15 +152,15 @@ export default function Settings({ onClose }: { onClose: () => void }) {
     const rolePrompt = newRolePrompt.trim()
     setAddTemplateError(null)
     if (!name) {
-      setAddTemplateError('请输入模板名称。')
+      setAddTemplateError(t('settings.errNameRequired'))
       return
     }
     if (!rolePrompt) {
-      setAddTemplateError('请输入角色提示词（rolePrompt）。')
+      setAddTemplateError(t('settings.errRoleRequired'))
       return
     }
     if (templates.some((t) => t.name === name)) {
-      setAddTemplateError('模板名称已存在，请换一个名称。')
+      setAddTemplateError(t('settings.errDuplicateName'))
       return
     }
 
@@ -164,7 +173,7 @@ export default function Settings({ onClose }: { onClose: () => void }) {
       setIsAddTemplateOpen(false)
     } catch (err) {
       console.error('Failed to create template:', err)
-      setAddTemplateError('创建失败，请稍后重试。')
+      setAddTemplateError(t('settings.errCreateFailed'))
     } finally {
       setIsCreatingTemplate(false)
     }
@@ -172,26 +181,30 @@ export default function Settings({ onClose }: { onClose: () => void }) {
 
   const handleConfirmDeleteTemplate = async () => {
     if (!templateToDelete || templateToDelete.isBuiltIn) return
-    const deletedName = templateToDelete.name
-    const wasCurrentSelection = templateSelectValue === deletedName
+    const wasCurrentSelection =
+      templateSelectValue === templateToDelete.id ||
+      (!templateToDelete.isBuiltIn && templateSelectValue === templateToDelete.name)
 
     setIsDeletingTemplate(true)
     setMessage(null)
     try {
       const ok = await deleteTemplate(templateToDelete.id)
       if (!ok) {
-        setMessage({ type: 'error', text: '无法删除该模板（内置模板不可删除）。' })
+        setMessage({ type: 'error', text: t('settings.errDeleteBuiltin') })
         return
       }
       setTemplateToDelete(null)
       const list = await reloadTemplates()
       if (wasCurrentSelection) {
-        const fallback = list.find((t) => t.isBuiltIn) ?? list[0]
-        handleUpdateGlobal('defaultTemplateName', fallback?.name ?? 'default')
+        const fallback = list.find((t) => t.id === 'builtin_default') ?? list.find((t) => t.isBuiltIn) ?? list[0]
+        handleUpdateGlobal(
+          'defaultTemplateName',
+          fallback?.isBuiltIn ? fallback.id : (fallback?.name ?? DEFAULT_TEMPLATE_NAME)
+        )
       }
     } catch (err) {
       console.error('Failed to delete template:', err)
-      setMessage({ type: 'error', text: '删除失败，请稍后重试。' })
+      setMessage({ type: 'error', text: t('settings.errDeleteFailed') })
     } finally {
       setIsDeletingTemplate(false)
     }
@@ -229,7 +242,7 @@ export default function Settings({ onClose }: { onClose: () => void }) {
       >
         <header className="flex shrink-0 items-center justify-between gap-3 border-b border-[color:var(--app-border-strong)] px-5 py-4">
           <h2 id="settings-title" className="text-lg font-semibold tracking-tight text-[var(--app-fg)]">
-            设置
+            {t('settings.title')}
           </h2>
           <Button
             type="button"
@@ -237,7 +250,7 @@ export default function Settings({ onClose }: { onClose: () => void }) {
             size="icon"
             className="shrink-0 rounded-full text-[var(--app-muted)] hover:bg-[var(--app-hover-strong)] hover:text-[var(--app-fg)]"
             onClick={onClose}
-            aria-label="关闭"
+            aria-label={t('settings.close')}
           >
             <X size={20} />
           </Button>
@@ -259,8 +272,28 @@ export default function Settings({ onClose }: { onClose: () => void }) {
 
           <div className="space-y-6">
             <section className="space-y-3 rounded-xl border border-[color:var(--app-border-strong)] bg-[var(--app-subtle-section)] p-4">
+              <div className="space-y-2">
+                <Label className="text-[var(--app-fg)]">{t('settings.language')}</Label>
+                <Select
+                  value={config.locale ?? 'zh-CN'}
+                  onValueChange={(value) =>
+                    handleUpdateGlobal('locale', value as GlobalSettings['locale'])
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent position="popper" sideOffset={6} align="start">
+                    <SelectItem value="zh-CN">{t('settings.langZh')}</SelectItem>
+                    <SelectItem value="en-US">{t('settings.langEn')}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </section>
+
+            <section className="space-y-3 rounded-xl border border-[color:var(--app-border-strong)] bg-[var(--app-subtle-section)] p-4">
               <div className="flex items-center justify-between gap-2">
-                <Label className="text-[var(--app-fg)]">本会话记忆</Label>
+                <Label className="text-[var(--app-fg)]">{t('settings.memorySection')}</Label>
                 <Button
                   type="button"
                   variant="ghost"
@@ -269,15 +302,15 @@ export default function Settings({ onClose }: { onClose: () => void }) {
                   onClick={handleClearMemory}
                   disabled={!currentConversationId || isMemoryLoading || memoryItems.length === 0}
                 >
-                  清空
+                  {t('settings.memoryClear')}
                 </Button>
               </div>
               {!currentConversationId ? (
-                <p className="text-xs leading-relaxed text-[var(--app-muted)]">请选择一个对话以查看记忆。</p>
+                <p className="text-xs leading-relaxed text-[var(--app-muted)]">{t('settings.memoryPickConv')}</p>
               ) : isMemoryLoading ? (
-                <p className="text-xs text-[var(--app-muted)]">加载中…</p>
+                <p className="text-xs text-[var(--app-muted)]">{t('settings.memoryLoading')}</p>
               ) : memoryItems.length === 0 ? (
-                <p className="text-xs text-[var(--app-muted)]">暂无记忆条目。</p>
+                <p className="text-xs text-[var(--app-muted)]">{t('settings.memoryEmpty')}</p>
               ) : (
                 <div className="max-h-36 space-y-2 overflow-y-auto pr-1">
                   {memoryItems.slice(0, 12).map((item, idx) => (
@@ -290,7 +323,7 @@ export default function Settings({ onClose }: { onClose: () => void }) {
                   ))}
                   {memoryItems.length > 12 && (
                     <p className="text-[11px] text-[var(--app-muted)]">
-                      已显示前 12 条（共 {memoryItems.length} 条）。
+                      {t('settings.memorySummary', { shown: 12, total: memoryItems.length })}
                     </p>
                   )}
                 </div>
@@ -299,7 +332,7 @@ export default function Settings({ onClose }: { onClose: () => void }) {
 
             <section className="space-y-4">
               <div className="space-y-2">
-                <Label className="text-[var(--app-fg)]">外观</Label>
+                <Label className="text-[var(--app-fg)]">{t('settings.appearance')}</Label>
                 <Select
                   value={config.theme ?? 'dark'}
                   onValueChange={(value) =>
@@ -307,34 +340,34 @@ export default function Settings({ onClose }: { onClose: () => void }) {
                   }
                 >
                   <SelectTrigger>
-                    <SelectValue placeholder="主题" />
+                    <SelectValue placeholder={t('settings.themePlaceholder')} />
                   </SelectTrigger>
                   <SelectContent position="popper" sideOffset={6} align="start">
-                    <SelectItem value="dark">深色</SelectItem>
-                    <SelectItem value="light">浅色</SelectItem>
-                    <SelectItem value="auto">跟随系统</SelectItem>
+                    <SelectItem value="dark">{t('settings.themeDark')}</SelectItem>
+                    <SelectItem value="light">{t('settings.themeLight')}</SelectItem>
+                    <SelectItem value="auto">{t('settings.themeAuto')}</SelectItem>
                   </SelectContent>
                 </Select>
-                <p className="text-xs text-[var(--app-muted)]">切换后立即生效；点「保存」可写入配置文件。</p>
+                <p className="text-xs text-[var(--app-muted)]">{t('settings.themeHint')}</p>
               </div>
 
               <div className="space-y-2">
                 <Label htmlFor="settings-api-key" className="text-[var(--app-fg)]">
-                  API Key
+                  {t('settings.apiKey')}
                 </Label>
                 <Input
                   id="settings-api-key"
                   type="password"
                   value={config.apiKey}
                   onChange={(e) => handleUpdateGlobal('apiKey', e.target.value)}
-                  placeholder="输入 API Key"
+                  placeholder={t('settings.apiKeyPlaceholder')}
                   autoComplete="off"
                 />
               </div>
 
               <div className="space-y-2">
                 <Label htmlFor="settings-model" className="text-[var(--app-fg)]">
-                  模型
+                  {t('settings.model')}
                 </Label>
                 <Input
                   id="settings-model"
@@ -346,19 +379,19 @@ export default function Settings({ onClose }: { onClose: () => void }) {
 
               <div className="space-y-2">
                 <Label htmlFor="settings-base-url" className="text-[var(--app-fg)]">
-                  Base URL
+                  {t('settings.baseUrl')}
                 </Label>
                 <Input
                   id="settings-base-url"
                   type="text"
                   value={config.baseURL || ''}
                   onChange={(e) => handleUpdateGlobal('baseURL', e.target.value)}
-                  placeholder="留空使用默认"
+                  placeholder={t('settings.baseUrlPlaceholder')}
                 />
               </div>
 
               <div className="space-y-2">
-                <Label className="text-[var(--app-fg)]">AI 人设模板</Label>
+                <Label className="text-[var(--app-fg)]">{t('settings.personaTemplate')}</Label>
                 {templates.length > 0 && templateSelectValue ? (
                   <Select
                     value={templateSelectValue}
@@ -367,28 +400,36 @@ export default function Settings({ onClose }: { onClose: () => void }) {
                         openAddTemplate()
                         return
                       }
-                      handleUpdateGlobal('defaultTemplateName', value)
+                      const sel =
+                        templates.find((x) => x.id === value) ??
+                        templates.find((x) => !x.isBuiltIn && x.name === value)
+                      if (sel) {
+                        handleUpdateGlobal(
+                          'defaultTemplateName',
+                          sel.isBuiltIn ? sel.id : sel.name
+                        )
+                      }
                     }}
                   >
                     <SelectTrigger>
-                      <SelectValue placeholder="选择模板" />
+                      <SelectValue placeholder={t('settings.templatePlaceholder')} />
                     </SelectTrigger>
                     <SelectContent position="popper" sideOffset={6} align="start" className="min-w-[var(--radix-select-trigger-width)]">
-                      {templates.map((t) =>
-                        t.isBuiltIn ? (
-                          <SelectItem key={t.id} value={t.name}>
-                            {t.name}
+                      {templates.map((tm) =>
+                        tm.isBuiltIn ? (
+                          <SelectItem key={tm.id} value={tm.id}>
+                            {t(`templates.builtin.${builtinKeyFromId(tm.id)}.name`)}
                           </SelectItem>
                         ) : (
                           <SelectItem
-                            key={t.id}
-                            value={t.name}
-                            textValue={t.name}
+                            key={tm.id}
+                            value={tm.name}
+                            textValue={tm.name}
                             trailing={
                               <button
                                 type="button"
                                 className="rounded-md p-1.5 text-[var(--app-muted)] outline-none transition-colors hover:bg-red-500/15 hover:text-red-400 focus-visible:ring-2 focus-visible:ring-[color:var(--app-focus-ring)] focus-visible:ring-offset-0"
-                                aria-label={`删除模板「${t.name}」`}
+                                aria-label={t('settings.deleteTemplateAria', { name: tm.name })}
                                 onPointerDown={(e) => {
                                   e.preventDefault()
                                   e.stopPropagation()
@@ -396,36 +437,34 @@ export default function Settings({ onClose }: { onClose: () => void }) {
                                 onClick={(e) => {
                                   e.preventDefault()
                                   e.stopPropagation()
-                                  setTemplateToDelete(t)
+                                  setTemplateToDelete(tm)
                                 }}
                               >
                                 <Trash2 size={14} strokeWidth={2} />
                               </button>
                             }
                           >
-                            {t.name}
+                            {tm.name}
                           </SelectItem>
                         )
                       )}
                       <div className="my-1 h-px bg-[color:var(--app-border-strong)]" />
-                      <SelectItem value="__add_template__">新增模板…</SelectItem>
+                      <SelectItem value="__add_template__">{t('settings.addTemplate')}</SelectItem>
                     </SelectContent>
                   </Select>
                 ) : (
-                  <p className="text-xs text-[var(--app-muted)]">正在加载模板列表…</p>
+                  <p className="text-xs text-[var(--app-muted)]">{t('settings.templateLoading')}</p>
                 )}
-                <p className="text-xs text-[var(--app-muted)]">
-                  内置模板不可删除；自定义模板在展开下拉的对应行右侧可删除。
-                </p>
+                <p className="text-xs text-[var(--app-muted)]">{t('settings.templateHint')}</p>
               </div>
             </section>
 
             <section className="space-y-5 border-t border-[color:var(--app-border-strong)] pt-5">
               <div className="space-y-3">
                 <div className="flex items-baseline justify-between gap-2">
-                  <Label className="text-[var(--app-fg)]">主动触发间隔</Label>
+                  <Label className="text-[var(--app-fg)]">{t('settings.proactiveInterval')}</Label>
                   <span className="text-xs tabular-nums text-[var(--app-muted)]">
-                    {config.defaultProactiveInterval || 60} 秒
+                    {config.defaultProactiveInterval || 60} {t('settings.seconds')}
                   </span>
                 </div>
                 <Slider
@@ -439,7 +478,7 @@ export default function Settings({ onClose }: { onClose: () => void }) {
 
               <div className="space-y-3">
                 <div className="flex items-baseline justify-between gap-2">
-                  <Label className="text-[var(--app-fg)]">最大触发点数量</Label>
+                  <Label className="text-[var(--app-fg)]">{t('settings.maxTriggers')}</Label>
                   <span className="text-xs tabular-nums text-[var(--app-muted)]">
                     {config.defaultMaxTriggers || 3}
                   </span>
@@ -454,7 +493,7 @@ export default function Settings({ onClose }: { onClose: () => void }) {
 
               <div className="flex items-center justify-between gap-4 rounded-xl border border-[color:var(--app-border-strong)] bg-[var(--app-subtle-section)] px-4 py-3">
                 <Label htmlFor="settings-proactive" className="cursor-pointer text-[var(--app-fg)]">
-                  启用主动对话
+                  {t('settings.proactiveToggle')}
                 </Label>
                 <Switch
                   id="settings-proactive"
@@ -478,7 +517,7 @@ export default function Settings({ onClose }: { onClose: () => void }) {
             ) : (
               <Check size={18} />
             )}
-            验证并保存配置
+            {t('settings.validateSave')}
           </Button>
           <Button
             type="button"
@@ -487,7 +526,7 @@ export default function Settings({ onClose }: { onClose: () => void }) {
             disabled={isSaving}
             className="w-full"
           >
-            {isSaving ? '保存中…' : '仅保存配置'}
+            {isSaving ? t('settings.saving') : t('settings.saveOnly')}
           </Button>
         </footer>
       </div>
@@ -506,14 +545,14 @@ export default function Settings({ onClose }: { onClose: () => void }) {
             className="w-full max-w-md overflow-hidden rounded-2xl border border-[color:var(--app-border-strong)] bg-[var(--app-surface)] shadow-2xl shadow-[var(--app-shadow-modal)]"
             onClick={(e) => e.stopPropagation()}
           >
-            <header className="border-b border-[color:var(--app-border-strong)] px-5 py-4">
+                       <header className="border-b border-[color:var(--app-border-strong)] px-5 py-4">
               <h3 id="delete-template-title" className="text-base font-semibold text-[var(--app-fg)]">
-                删除模板
+                {t('settings.deleteTemplateTitle')}
               </h3>
             </header>
             <div className="px-5 py-4">
               <p className="text-sm text-[var(--app-muted)]">
-                确定删除「{templateToDelete.name}」？此操作不可撤销。
+                {t('settings.deleteTemplateConfirm', { name: templateToDelete.name })}
               </p>
             </div>
             <footer className="flex items-center justify-end gap-2 border-t border-[color:var(--app-border-strong)] bg-[var(--app-surface-footer)] px-5 py-4">
@@ -523,7 +562,7 @@ export default function Settings({ onClose }: { onClose: () => void }) {
                 onClick={() => setTemplateToDelete(null)}
                 disabled={isDeletingTemplate}
               >
-                取消
+                {t('sidebar.cancel')}
               </Button>
               <Button
                 type="button"
@@ -531,7 +570,7 @@ export default function Settings({ onClose }: { onClose: () => void }) {
                 className="bg-red-600 text-white hover:bg-red-500"
                 onClick={() => void handleConfirmDeleteTemplate()}
               >
-                {isDeletingTemplate ? '删除中…' : '删除'}
+                {isDeletingTemplate ? t('settings.deleting') : t('settings.deleteLabel')}
               </Button>
             </footer>
           </div>
@@ -543,7 +582,7 @@ export default function Settings({ onClose }: { onClose: () => void }) {
           className="fixed inset-0 z-[60] flex items-center justify-center bg-[var(--app-overlay)] p-4 backdrop-blur-sm"
           role="dialog"
           aria-modal="true"
-          aria-label="新增模板"
+          aria-label={t('settings.addTemplateTitle')}
           onClick={() => setIsAddTemplateOpen(false)}
         >
           <div
@@ -552,7 +591,7 @@ export default function Settings({ onClose }: { onClose: () => void }) {
           >
             <header className="flex items-center justify-between gap-3 border-b border-[color:var(--app-border-strong)] px-5 py-4">
               <h3 className="text-base font-semibold tracking-tight text-[var(--app-fg)]">
-                新增模板
+                {t('settings.addTemplateTitle')}
               </h3>
               <Button
                 type="button"
@@ -560,7 +599,7 @@ export default function Settings({ onClose }: { onClose: () => void }) {
                 size="icon"
                 className="shrink-0 rounded-full text-[var(--app-muted)] hover:bg-[var(--app-hover-strong)] hover:text-[var(--app-fg)]"
                 onClick={() => setIsAddTemplateOpen(false)}
-                aria-label="关闭"
+                aria-label={t('settings.close')}
               >
                 <X size={20} />
               </Button>
@@ -574,30 +613,28 @@ export default function Settings({ onClose }: { onClose: () => void }) {
               )}
 
               <div className="space-y-2">
-                <Label className="text-[var(--app-fg)]">模板名称</Label>
+                <Label className="text-[var(--app-fg)]">{t('settings.templateName')}</Label>
                 <Input
                   value={newTemplateName}
                   onChange={(e) => setNewTemplateName(e.target.value)}
-                  placeholder="例如：产品经理 / 代码审查 / 英语老师"
+                  placeholder={t('settings.templateNamePh')}
                   autoFocus
                 />
               </div>
 
               <div className="space-y-2">
-                <Label className="text-[var(--app-fg)]">角色提示词（rolePrompt）</Label>
+                <Label className="text-[var(--app-fg)]">{t('settings.rolePrompt')}</Label>
                 <textarea
                   value={newRolePrompt}
                   onChange={(e) => setNewRolePrompt(e.target.value)}
-                  placeholder="描述这个助手的角色、语气、目标、边界等…"
+                  placeholder={t('settings.rolePromptPh')}
                   rows={6}
                   className={cn(
                     'w-full resize-y rounded-xl border border-[color:var(--app-input-border)] bg-[var(--app-input-bg)] px-4 py-3 text-base text-[var(--app-input-fg)] outline-none placeholder:text-[var(--app-muted-fg)] transition-colors',
                     'focus-visible:ring-2 focus-visible:ring-[color:var(--app-focus-ring)] focus-visible:ring-offset-0'
                   )}
                 />
-                <p className="text-xs text-[var(--app-muted)]">
-                  只会注入到“角色设定”部分；系统的触发点/格式要求等仍由程序统一追加，不会被覆盖。
-                </p>
+                <p className="text-xs text-[var(--app-muted)]">{t('settings.rolePromptHint')}</p>
               </div>
             </div>
 
@@ -608,10 +645,10 @@ export default function Settings({ onClose }: { onClose: () => void }) {
                 onClick={() => setIsAddTemplateOpen(false)}
                 disabled={isCreatingTemplate}
               >
-                取消
+                {t('sidebar.cancel')}
               </Button>
               <Button type="button" onClick={handleCreateTemplate} disabled={isCreatingTemplate}>
-                {isCreatingTemplate ? '创建中…' : '创建并选中'}
+                {isCreatingTemplate ? t('settings.creating') : t('settings.create')}
               </Button>
             </footer>
           </div>

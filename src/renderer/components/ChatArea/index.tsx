@@ -1,4 +1,5 @@
 import { Sparkles, User } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import { useChatStore } from '@/stores/chatStore'
 import { useConversationStore } from '@/stores/conversationStore'
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -8,6 +9,7 @@ import { cn } from '@/lib/utils'
 import { getMessages } from '@/api'
 
 export default function ChatArea() {
+  const { t } = useTranslation()
   const { messages, isLoading, updateMessages } = useChatStore()
   const { currentConversationId } = useConversationStore()
   const bottomRef = useRef<HTMLDivElement>(null)
@@ -65,10 +67,10 @@ export default function ChatArea() {
         <div className="max-w-3xl mx-auto space-y-8 pb-32">
           <div className="mt-20 space-y-8">
             <h1 className="text-5xl font-medium bg-gradient-to-r from-blue-400 via-purple-400 to-red-400 bg-clip-text text-transparent">
-              你好，我是 ProactiveAI
+              {t('chat.heroTitle')}
             </h1>
             <p className="text-2xl font-medium text-[var(--app-muted)]">
-              今天我可以帮你做些什么？
+              {t('chat.heroSubtitle')}
             </p>
           </div>
         </div>
@@ -87,8 +89,8 @@ export default function ChatArea() {
       <div className="max-w-3xl mx-auto space-y-8 pb-32">
         {currentMessages.length === 0 && (
           <div className="mt-16 space-y-3">
-            <h2 className="text-2xl font-medium text-[var(--app-fg)]">开始新的对话</h2>
-            <p className="text-sm text-[var(--app-muted)]">在下方输入框发送第一条消息。</p>
+            <h2 className="text-2xl font-medium text-[var(--app-fg)]">{t('chat.emptyHeading')}</h2>
+            <p className="text-sm text-[var(--app-muted)]">{t('chat.emptyHint')}</p>
           </div>
         )}
         {currentMessages.map((msg) => (

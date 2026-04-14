@@ -1,4 +1,5 @@
 import { Menu, Plus, MessageSquare, Settings, MoreVertical, Pencil, Trash2 } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import { useSidebar } from '@/hooks/useSidebar'
 import { useConversationStore } from '@/stores/conversationStore'
 import { useChatStore } from '@/stores/chatStore'
@@ -32,6 +33,7 @@ function ConversationMoreMenu({
   onRename: () => void
   onDelete: () => void
 }) {
+  const { t } = useTranslation()
   return (
     <DropdownMenu open={open} onOpenChange={onOpenChange}>
       <div
@@ -46,7 +48,7 @@ function ConversationMoreMenu({
           <button
             type="button"
             className="cursor-pointer rounded-full p-2 text-[var(--app-muted)] outline-none transition-colors hover:bg-[var(--app-hover-strong)] hover:text-[var(--app-fg)] focus-visible:ring-2 focus-visible:ring-[color:var(--app-focus-ring)] focus-visible:ring-offset-0"
-            aria-label="对话操作"
+            aria-label={t('sidebar.convActions')}
             onClick={(e) => e.stopPropagation()}
           >
             <MoreVertical size={16} strokeWidth={2} />
@@ -62,7 +64,7 @@ function ConversationMoreMenu({
           }}
         >
           <Pencil size={16} className="shrink-0 text-[var(--app-muted)]" aria-hidden />
-          <span className="text-[var(--app-fg)]">重命名</span>
+          <span className="text-[var(--app-fg)]">{t('sidebar.rename')}</span>
         </DropdownMenuItem>
         <DropdownMenuItem
           onSelect={(e) => {
@@ -72,7 +74,7 @@ function ConversationMoreMenu({
           }}
         >
           <Trash2 size={16} className="shrink-0 text-[var(--app-muted)]" aria-hidden />
-          <span className="text-[var(--app-fg)]">删除</span>
+          <span className="text-[var(--app-fg)]">{t('sidebar.delete')}</span>
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
@@ -80,6 +82,7 @@ function ConversationMoreMenu({
 }
 
 export default function Sidebar({ onOpenSettings }: SidebarProps) {
+  const { t } = useTranslation()
   const { isOpen, toggle } = useSidebar()
   const {
     conversations,
@@ -115,7 +118,7 @@ export default function Sidebar({ onOpenSettings }: SidebarProps) {
 
   const handleRenameSave = async () => {
     if (!renameConvId) return
-    const title = renameTitle.trim() || '新对话'
+    const title = renameTitle.trim() || t('conversation.defaultTitle')
     await updateConversation(renameConvId, { title })
     setRenameConvId(null)
   }
@@ -129,7 +132,7 @@ export default function Sidebar({ onOpenSettings }: SidebarProps) {
       }
     }
     const conv = conversations.find((c: Conversation) => c.id === id)
-    return conv?.title || '新对话'
+    return conv?.title || t('conversation.defaultTitle')
   }
 
   return (
@@ -144,8 +147,8 @@ export default function Sidebar({ onOpenSettings }: SidebarProps) {
             <button
               onClick={toggle}
               className="cursor-pointer self-start rounded-full p-2 transition-colors hover:bg-[var(--app-hover-strong)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--app-focus-ring)] focus-visible:ring-offset-0"
-              aria-label="切换侧边栏"
-              title="切换侧边栏"
+              aria-label={t('sidebar.toggle')}
+              title={t('sidebar.toggle')}
             >
               <Menu size={24} />
             </button>
@@ -153,8 +156,8 @@ export default function Sidebar({ onOpenSettings }: SidebarProps) {
             <button
               onClick={handleNewConversation}
               className="relative flex w-full cursor-pointer items-center gap-3 rounded-full px-3 py-2.5 text-left hover:bg-[var(--app-hover)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--app-focus-ring)] focus-visible:ring-offset-0"
-              aria-label="新对话"
-              title="新对话"
+              aria-label={t('sidebar.newChat')}
+              title={t('sidebar.newChat')}
             >
               <Plus size={18} className="shrink-0 text-[var(--app-muted)]" />
               <span
@@ -163,7 +166,7 @@ export default function Sidebar({ onOpenSettings }: SidebarProps) {
                   isOpen ? 'opacity-100 delay-150' : 'opacity-0 delay-0 pointer-events-none'
                 )}
               >
-                新对话
+                {t('sidebar.newChat')}
               </span>
             </button>
           </div>
@@ -180,7 +183,7 @@ export default function Sidebar({ onOpenSettings }: SidebarProps) {
           >
             {conversations.length > 0 && (
               <p className="px-4 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wider text-[var(--app-muted)]">
-                最近
+                {t('sidebar.recent')}
               </p>
             )}
             {conversations.map((conv: Conversation) => (
@@ -216,8 +219,8 @@ export default function Sidebar({ onOpenSettings }: SidebarProps) {
           <button
             onClick={onOpenSettings}
             className="relative flex w-full cursor-pointer items-center gap-3 rounded-full px-3 py-2.5 text-left hover:bg-[var(--app-hover)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--app-focus-ring)] focus-visible:ring-offset-0"
-            aria-label="设置"
-            title="设置"
+            aria-label={t('sidebar.settings')}
+            title={t('sidebar.settings')}
           >
             <Settings size={18} className="shrink-0 text-[var(--app-muted)]" />
             <span
@@ -226,7 +229,7 @@ export default function Sidebar({ onOpenSettings }: SidebarProps) {
                 isOpen ? 'opacity-100 delay-150' : 'opacity-0 delay-0 pointer-events-none'
               )}
             >
-              设置
+              {t('sidebar.settings')}
             </span>
           </button>
         </div>
@@ -240,18 +243,18 @@ export default function Sidebar({ onOpenSettings }: SidebarProps) {
       >
         <DialogContent className="max-w-md sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>重命名对话</DialogTitle>
+            <DialogTitle>{t('sidebar.renameTitle')}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4 pt-2">
             <div className="space-y-2">
               <Label htmlFor="rename-conv-title" className="text-[var(--app-fg)]">
-                标题
+                {t('sidebar.titleLabel')}
               </Label>
               <Input
                 id="rename-conv-title"
                 value={renameTitle}
                 onChange={(e) => setRenameTitle(e.target.value)}
-                placeholder="对话标题"
+                placeholder={t('sidebar.titlePlaceholder')}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') void handleRenameSave()
                 }}
@@ -260,10 +263,10 @@ export default function Sidebar({ onOpenSettings }: SidebarProps) {
             </div>
             <div className="flex justify-end gap-2">
               <Button type="button" variant="secondary" onClick={() => setRenameConvId(null)}>
-                取消
+                {t('sidebar.cancel')}
               </Button>
               <Button type="button" onClick={() => void handleRenameSave()}>
-                保存
+                {t('sidebar.save')}
               </Button>
             </div>
           </div>

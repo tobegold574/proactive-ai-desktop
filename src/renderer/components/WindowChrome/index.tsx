@@ -1,4 +1,5 @@
 import { Minus, Square, X } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
 
 function CenteredTitle() {
@@ -19,6 +20,7 @@ function CenteredTitle() {
  * macOS：为交通灯预留左侧区域，其余为拖拽区。标题几何居中，不拦截拖拽。
  */
 export default function WindowChrome() {
+  const { t } = useTranslation()
   const platform = window.electronAPI.platform
 
   const onDoubleClickDrag = () => {
@@ -65,7 +67,7 @@ export default function WindowChrome() {
             type="button"
             className="flex w-[46px] items-center justify-center text-[var(--app-muted)] transition-colors hover:bg-[var(--app-hover)] hover:text-[var(--app-fg)]"
             onClick={() => void window.electronAPI.window.minimize()}
-            aria-label="最小化"
+            aria-label={t('window.minimize')}
           >
             <Minus size={15} strokeWidth={2} />
           </button>
@@ -73,7 +75,7 @@ export default function WindowChrome() {
             type="button"
             className="flex w-[46px] items-center justify-center text-[var(--app-muted)] transition-colors hover:bg-[var(--app-hover)] hover:text-[var(--app-fg)]"
             onClick={() => void window.electronAPI.window.maximizeToggle()}
-            aria-label="最大化或还原"
+            aria-label={t('window.maximize')}
           >
             <Square size={12} strokeWidth={2} />
           </button>
@@ -81,7 +83,7 @@ export default function WindowChrome() {
             type="button"
             className="flex w-[46px] items-center justify-center text-[var(--app-muted)] transition-colors hover:bg-red-600/85 hover:text-white"
             onClick={() => void window.electronAPI.window.close()}
-            aria-label="关闭"
+            aria-label={t('window.close')}
           >
             <X size={15} strokeWidth={2} />
           </button>

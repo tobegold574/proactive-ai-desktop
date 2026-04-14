@@ -8,6 +8,7 @@ import {
   updateConversation as updateConversationAPI,
   deleteConversation as deleteConversationAPI,
 } from '../api'
+import i18n from '../i18n'
 
 interface ConversationStore {
   conversations: Conversation[]
@@ -54,8 +55,9 @@ export const useConversationStore = create<ConversationStore>()(
       },
 
       createConversation: async (title?: string) => {
+        const resolvedTitle = title ?? i18n.t('conversation.defaultTitle')
         try {
-          const newConv = await createConversationAPI(title)
+          const newConv = await createConversationAPI(resolvedTitle)
           set((state) => ({
             conversations: [newConv, ...state.conversations],
             currentConversationId: newConv.id,
@@ -66,7 +68,7 @@ export const useConversationStore = create<ConversationStore>()(
           const id = `conv_${Date.now()}`
           const newConversation: Conversation = {
             id,
-            title: title || '新对话',
+            title: resolvedTitle,
             createdAt: Date.now(),
             updatedAt: Date.now(),
           }

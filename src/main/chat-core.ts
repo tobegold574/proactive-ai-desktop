@@ -12,6 +12,12 @@ import {
   DEFAULT_PROACTIVE_INTERVAL,
   buildSystemPrompt,
 } from '../shared/config'
+import { normalizeLocale } from '../shared/locale'
+import {
+  getFallbackRolePrompt,
+  getImportantInfoSystemPrefix,
+  modelEmptyResponseMessage,
+} from '../shared/prompt-i18n'
 
 export class ChatCore {
   /**
@@ -38,8 +44,9 @@ export class ChatCore {
       globalSettings.defaultProactiveInterval ||
       DEFAULT_PROACTIVE_INTERVAL
 
-    const finalRolePrompt = rolePrompt || '你是一个主动的AI助手。'
-    const systemPrompt = buildSystemPrompt(finalRolePrompt, maxTriggers)
+    const locale = normalizeLocale(globalSettings.locale)
+    const finalRolePrompt = rolePrompt || getFallbackRolePrompt(locale)
+    const systemPrompt = buildSystemPrompt(finalRolePrompt, maxTriggers, locale)
 
     const settings = {
       recentMessagesCount: conversationSettings?.recentMessagesCount || 3,
@@ -54,7 +61,8 @@ export class ChatCore {
       model,
       baseURL,
       systemPrompt,
-      settings
+      settings,
+      locale
     )
 
     return response
@@ -96,7 +104,8 @@ export class ChatCore {
     modelId: string,
     baseURL: string,
     systemPrompt: string,
-    settings: { recentMessagesCount?: number; proactiveInterval?: number }
+    settings: { recentMessagesCount?: number; proactiveInterval?: number },
+    locale: ReturnType<typeof normalizeLocale>
   ): Promise<AIResponse> {
     const client = new OpenAI({
       apiKey,
@@ -109,7 +118,8 @@ export class ChatCore {
       systemPrompt,
       history,
       importantInfo,
-      recentMessagesCount
+      recentMessagesCount,
+      locale
     )
     messages.push({ role: 'user', content: userMessage })
 
@@ -122,7 +132,7 @@ export class ChatCore {
     if (typeof content !== 'string' || content.trim().length === 0) {
       // 某些代理/网关在异常情况下可能返回 choices=null 或空数组
       return {
-        reply: '错误：模型返回了空响应（choices 为空），请稍后重试或更换模型/Base URL。',
+        reply: modelEmptyResponseMessage(locale),
         triggers: [],
         next_api_call_seconds: settings.proactiveInterval || DEFAULT_PROACTIVE_INTERVAL,
         important_info: [],
@@ -189,7 +199,8 @@ export class ChatCore {
     systemPrompt: string,
     history: ChatMessage[],
     importantInfo: string[],
-    recentMessagesCount: number = 3
+    recentMessagesCount: number = 3,
+    locale: ReturnType<typeof normalizeLocale> = 'zh-CN'
   ) {
     const messages: OpenAI.Chat.ChatCompletionMessageParam[] = []
 
@@ -200,7 +211,7 @@ export class ChatCore {
     if (importantInfo.length > 0) {
       messages.push({
         role: 'system',
-        content: `[用户重要信息] ${importantInfo.join('; ')}`,
+        content: `${getImportantInfoSystemPrefix(locale)}${importantInfo.join('; ')}`,
       })
     }
 
