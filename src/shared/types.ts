@@ -96,3 +96,22 @@ export interface Plugin {
   hooks: PluginHooks
   config?: Record<string, any>
 }
+
+/** 设置页 / IPC：插件列表项（一期仅内置） */
+export interface PluginListEntry {
+  id: string
+  name: string
+  version: string
+  enabled: boolean
+  builtin: boolean
+  /** 加载或校验失败时由主进程填充 */
+  error?: string
+}
+
+/** plugins:exportConversation 返回 */
+export interface PluginExportResult {
+  ok: boolean
+  /** 写入下载目录的文件名（非完整路径） */
+  filename?: string
+  error?: string
+}

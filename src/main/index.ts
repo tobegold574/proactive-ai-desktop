@@ -11,9 +11,12 @@ import {
   ChatMessage,
   AIResponse,
   PromptTemplate,
+  PluginListEntry,
+  PluginExportResult,
 } from '../shared/types'
 import { normalizeLocale, isDefaultConversationTitle, defaultConversationTitle } from '../shared/locale'
 import { getBuiltinRolePrompt, getFallbackRolePrompt } from '../shared/prompt-i18n'
+import { pluginRegistry } from './plugins/registry'
 
 let mainWindow: BrowserWindow | null = null
 let chatCore: ChatCore | null = null
@@ -70,6 +73,7 @@ app.whenReady().then(() => {
   }
   Menu.setApplicationMenu(null)
   templateStore.init()
+  pluginRegistry.initBuiltins()
   chatCore = new ChatCore()
   createWindow()
   setupIPC()
@@ -138,6 +142,12 @@ function setupIPC() {
         rolePrompt = template?.rolePrompt || getFallbackRolePrompt(locale)
       }
 
+      const content = await pluginRegistry.runMessageSend(message)
+      const historyForModel = pluginRegistry.patchHistoryLastUserContent(
+        history,
+        content
+      )
+
       if (conversationId) {
         const prior = messageStore.getByConversation(conversationId)
         const conv = await conversationStore.get(conversationId)
@@ -147,7 +157,7 @@ function setupIPC() {
           isDefaultConversationTitle(conv.title)
         ) {
           await conversationStore.update(conversationId, {
-            title: titleFromFirstUserMessage(message, locale),
+            title: titleFromFirstUserMessage(content, locale),
           })
         }
 
@@ -155,26 +165,33 @@ function setupIPC() {
         const userMessage: ChatMessage = {
           id: `msg_${Date.now()}`,
           role: 'user',
-          content: message,
+          content,
           createdAt: Date.now(),
         }
         messageStore.add(conversationId, userMessage)
       }
 
       const response = await chatCore.sendMessage(
-        message,
-        history,
+        content,
+        historyForModel,
         importantInfo,
         config,
         conversationSettings,
         rolePrompt
       )
 
+      let replyOut = response.reply
+      replyOut = await pluginRegistry.runMessageReceive(replyOut)
+
+      for (const t of response.triggers || []) {
+        await pluginRegistry.runOnTrigger(t)
+      }
+
       if (conversationId) {
         const assistantMessage: ChatMessage = {
           id: `msg_${Date.now() + 1}`,
           role: 'assistant',
-          content: response.reply,
+          content: replyOut,
           createdAt: Date.now(),
         }
         messageStore.add(conversationId, assistantMessage)
@@ -189,9 +206,13 @@ function setupIPC() {
             await conversationStore.update(conversationId, { memory: merged })
           }
         }
+        await pluginRegistry.runMemoryUpdate(newMemory)
       }
 
-      return response
+      return {
+        ...response,
+        reply: replyOut,
+      }
     }
   )
 
@@ -324,6 +345,25 @@ function setupIPC() {
       if (!conversation) return false
       await conversationStore.update(conversationId, { memory: [] })
       return true
+    }
+  )
+
+  ipcMain.handle('plugins:list', async (): Promise<PluginListEntry[]> => {
+    return pluginRegistry.listPlugins()
+  })
+
+  ipcMain.handle(
+    'plugins:setEnabled',
+    async (event, pluginId: string, enabled: boolean): Promise<boolean> => {
+      pluginRegistry.setEnabled(pluginId, enabled)
+      return true
+    }
+  )
+
+  ipcMain.handle(
+    'plugins:exportConversation',
+    async (event, conversationId: string): Promise<PluginExportResult> => {
+      return pluginRegistry.exportConversationMarkdown(conversationId)
     }
   )
 }

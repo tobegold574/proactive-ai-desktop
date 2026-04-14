@@ -1,4 +1,13 @@
-import { ChatMessage, UserConfig, ChatResponse, GlobalSettings, PromptTemplate, Conversation } from '@shared'
+import {
+  ChatMessage,
+  UserConfig,
+  ChatResponse,
+  GlobalSettings,
+  PromptTemplate,
+  Conversation,
+  PluginListEntry,
+  PluginExportResult,
+} from '@shared'
 
 declare global {
   interface Window {
@@ -42,6 +51,11 @@ declare global {
       memory: {
         list: (conversationId: string) => Promise<string[]>
         clear: (conversationId: string) => Promise<boolean>
+      }
+      plugins: {
+        list: () => Promise<PluginListEntry[]>
+        setEnabled: (pluginId: string, enabled: boolean) => Promise<boolean>
+        exportConversation: (conversationId: string) => Promise<PluginExportResult>
       }
     }
   }
@@ -129,4 +143,21 @@ export async function getConversationMemory(conversationId: string): Promise<str
 
 export async function clearConversationMemory(conversationId: string): Promise<boolean> {
   return window.electronAPI.memory.clear(conversationId)
+}
+
+export async function listPlugins(): Promise<PluginListEntry[]> {
+  return window.electronAPI.plugins.list()
+}
+
+export async function setPluginEnabled(
+  pluginId: string,
+  enabled: boolean
+): Promise<boolean> {
+  return window.electronAPI.plugins.setEnabled(pluginId, enabled)
+}
+
+export async function exportConversationMarkdown(
+  conversationId: string
+): Promise<PluginExportResult> {
+  return window.electronAPI.plugins.exportConversation(conversationId)
 }
