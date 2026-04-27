@@ -12,17 +12,31 @@ import {
   AIResponse,
   PromptTemplate,
 } from '../shared/types'
+import { normalizeLocale, isDefaultConversationTitle, defaultConversationTitle } from '../shared/locale'
+import { getBuiltinRolePrompt, getFallbackRolePrompt } from '../shared/prompt-i18n'
+import { pluginRegistry } from './plugins/registry'
+import {
+  ensurePAvatarPacksDir,
+  getActivePAvatarPackResolved,
+  registerPAvatarProtocol,
+  scanPAvatarPacks,
+  syncBundledPavatarPackIfNeeded,
+} from './pavatar/pack-store'
+import { pluginPreferencesStore } from './plugin-preferences-store'
+import type { PAvatarPackResolved, PluginListEntry } from '../shared/types'
 
 let mainWindow: BrowserWindow | null = null
 let chatCore: ChatCore | null = null
 
 const WINDOW_TITLE = 'ProactiveAI'
 
-const DEFAULT_CONVERSATION_TITLE = '新对话'
-
-function titleFromFirstUserMessage(text: string, maxLen = 42): string {
+function titleFromFirstUserMessage(
+  text: string,
+  locale: ReturnType<typeof normalizeLocale>,
+  maxLen = 42
+): string {
   const normalized = text.replace(/\s+/g, ' ').trim()
-  if (!normalized) return DEFAULT_CONVERSATION_TITLE
+  if (!normalized) return defaultConversationTitle(locale)
   if (normalized.length <= maxLen) return normalized
   return normalized.slice(0, maxLen).trimEnd() + '…'
 }
@@ -60,15 +74,23 @@ function createWindow() {
   })
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   if (process.platform === 'darwin') {
     app.setName(WINDOW_TITLE)
   }
   Menu.setApplicationMenu(null)
   templateStore.init()
+  registerPAvatarProtocol()
+  await ensurePAvatarPacksDir()
+  await syncBundledPavatarPackIfNeeded()
   chatCore = new ChatCore()
-  createWindow()
+  pluginRegistry.setRendererDispatcher((message) => {
+    mainWindow?.webContents.send('plugin:dispatch', message)
+  })
+  pluginRegistry.initBuiltins()
+  // Register IPC before any window loads the renderer (avoids invoke races in dev).
   setupIPC()
+  createWindow()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -99,6 +121,44 @@ function setupIPC() {
     mainWindow?.close()
   })
 
+  // pavatar packs
+  ipcMain.handle('pavatar:listPacks', async (): Promise<PAvatarPackResolved[]> => {
+    return await scanPAvatarPacks()
+  })
+  ipcMain.handle('pavatar:getActivePack', async (): Promise<PAvatarPackResolved | null> => {
+    return await getActivePAvatarPackResolved()
+  })
+  ipcMain.handle(
+    'pavatar:setActivePack',
+    async (_ev, packId: string, version: string): Promise<boolean> => {
+      const packs = await scanPAvatarPacks()
+      const hit = packs.find((p) => p.packId === packId && p.version === version)
+      if (!hit) return false
+      const cur = pluginPreferencesStore.getPluginConfig('com.proactiveai.pavatar')
+      pluginPreferencesStore.setPluginConfig('com.proactiveai.pavatar', {
+        ...cur,
+        activePackId: packId,
+        activePackVersion: version,
+      })
+      mainWindow?.webContents.send('pavatar:activePackChanged', { packId, version })
+      return true
+    }
+  )
+
+  ipcMain.handle('plugins:list', async (): Promise<PluginListEntry[]> => {
+    return pluginRegistry.listPlugins()
+  })
+  ipcMain.handle(
+    'plugins:setEnabled',
+    async (_ev, pluginId: string, enabled: boolean): Promise<boolean> => {
+      const known = pluginRegistry.listPlugins().some((p) => p.id === pluginId)
+      if (!known) return false
+      pluginRegistry.setEnabled(pluginId, enabled)
+      mainWindow?.webContents.send('plugins:preferencesChanged')
+      return true
+    }
+  )
+
   ipcMain.handle(
     'chat:send',
     async (
@@ -113,6 +173,7 @@ function setupIPC() {
       }
 
       const config = configStore.get()
+      const locale = normalizeLocale(config.locale)
       let conversationSettings: Conversation['settings'] = undefined
 
       if (conversationId) {
@@ -122,10 +183,22 @@ function setupIPC() {
         }
       }
 
-      const templateName =
+      const templateRef =
         conversationSettings?.templateName || config.defaultTemplateName
-      const template = templateStore.get(templateName || '默认助手')
-      const rolePrompt = template?.rolePrompt || '你是一个主动的AI助手。'
+      const template = templateStore.resolveTemplate(templateRef)
+      let rolePrompt: string
+      if (template?.isBuiltIn && template.id.startsWith('builtin_')) {
+        const key = template.id.slice('builtin_'.length)
+        rolePrompt = getBuiltinRolePrompt(key, locale)
+      } else {
+        rolePrompt = template?.rolePrompt || getFallbackRolePrompt(locale)
+      }
+
+      const content = await pluginRegistry.runMessageSend(message)
+      const historyForModel = pluginRegistry.patchHistoryLastUserContent(
+        history,
+        content
+      )
 
       if (conversationId) {
         const prior = messageStore.getByConversation(conversationId)
@@ -133,10 +206,10 @@ function setupIPC() {
         if (
           prior.length === 0 &&
           conv &&
-          conv.title === DEFAULT_CONVERSATION_TITLE
+          isDefaultConversationTitle(conv.title)
         ) {
           await conversationStore.update(conversationId, {
-            title: titleFromFirstUserMessage(message),
+            title: titleFromFirstUserMessage(content, locale),
           })
         }
 
@@ -144,26 +217,33 @@ function setupIPC() {
         const userMessage: ChatMessage = {
           id: `msg_${Date.now()}`,
           role: 'user',
-          content: message,
+          content,
           createdAt: Date.now(),
         }
         messageStore.add(conversationId, userMessage)
       }
 
       const response = await chatCore.sendMessage(
-        message,
-        history,
+        content,
+        historyForModel,
         importantInfo,
         config,
         conversationSettings,
         rolePrompt
       )
 
+      let replyOut = response.reply
+      replyOut = await pluginRegistry.runMessageReceive(replyOut)
+
+      for (const t of response.triggers || []) {
+        await pluginRegistry.runOnTrigger(t)
+      }
+
       if (conversationId) {
         const assistantMessage: ChatMessage = {
           id: `msg_${Date.now() + 1}`,
           role: 'assistant',
-          content: response.reply,
+          content: replyOut,
           createdAt: Date.now(),
         }
         messageStore.add(conversationId, assistantMessage)
@@ -178,9 +258,13 @@ function setupIPC() {
             await conversationStore.update(conversationId, { memory: merged })
           }
         }
+        await pluginRegistry.runMemoryUpdate(newMemory)
       }
 
-      return response
+      return {
+        ...response,
+        reply: replyOut,
+      }
     }
   )
 
@@ -253,7 +337,12 @@ function setupIPC() {
   ipcMain.handle(
     'conversations:create',
     async (event, title?: string): Promise<Conversation> => {
-      return await conversationStore.create(title)
+      const cfg = configStore.get()
+      const initial =
+        title && title.length > 0
+          ? title
+          : defaultConversationTitle(normalizeLocale(cfg.locale))
+      return await conversationStore.create(initial)
     }
   )
 
@@ -310,4 +399,5 @@ function setupIPC() {
       return true
     }
   )
+
 }

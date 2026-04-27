@@ -4,6 +4,7 @@ import {
   AIResponse,
   GlobalSettings,
   ConversationSettings,
+  Trigger,
 } from '../shared/types'
 import {
   DEFAULT_BASE_URL,
@@ -12,6 +13,14 @@ import {
   DEFAULT_PROACTIVE_INTERVAL,
   buildSystemPrompt,
 } from '../shared/config'
+import { normalizeLocale } from '../shared/locale'
+import {
+  getFallbackRolePrompt,
+  getImportantInfoSystemPrefix,
+  modelEmptyResponseMessage,
+} from '../shared/prompt-i18n'
+import { pluginRegistry } from './plugins/registry'
+import { pavatarMainLog } from './pavatar/debug-log'
 
 export class ChatCore {
   /**
@@ -38,8 +47,24 @@ export class ChatCore {
       globalSettings.defaultProactiveInterval ||
       DEFAULT_PROACTIVE_INTERVAL
 
-    const finalRolePrompt = rolePrompt || '你是一个主动的AI助手。'
-    const systemPrompt = buildSystemPrompt(finalRolePrompt, maxTriggers)
+    const locale = normalizeLocale(globalSettings.locale)
+    const finalRolePrompt = rolePrompt || getFallbackRolePrompt(locale)
+    let systemPrompt = buildSystemPrompt(finalRolePrompt, maxTriggers, locale)
+
+    // 插件 system prompt hook（追加文本）
+    const lenBeforePlugins = systemPrompt.length
+    systemPrompt = await pluginRegistry.runSystemPromptBuild({
+      systemPrompt,
+      locale,
+    })
+    pavatarMainLog('ChatCore.sendMessage after runSystemPromptBuild', {
+      systemPromptCharsBefore: lenBeforePlugins,
+      systemPromptCharsAfter: systemPrompt.length,
+      deltaChars: systemPrompt.length - lenBeforePlugins,
+      hasPavatarInstructions:
+        systemPrompt.includes('## 虚拟形象表情协议') ||
+        systemPrompt.includes('## Avatar expression protocol'),
+    })
 
     const settings = {
       recentMessagesCount: conversationSettings?.recentMessagesCount || 3,
@@ -54,7 +79,8 @@ export class ChatCore {
       model,
       baseURL,
       systemPrompt,
-      settings
+      settings,
+      locale
     )
 
     return response
@@ -96,7 +122,8 @@ export class ChatCore {
     modelId: string,
     baseURL: string,
     systemPrompt: string,
-    settings: { recentMessagesCount?: number; proactiveInterval?: number }
+    settings: { recentMessagesCount?: number; proactiveInterval?: number },
+    locale: ReturnType<typeof normalizeLocale>
   ): Promise<AIResponse> {
     const client = new OpenAI({
       apiKey,
@@ -109,7 +136,8 @@ export class ChatCore {
       systemPrompt,
       history,
       importantInfo,
-      recentMessagesCount
+      recentMessagesCount,
+      locale
     )
     messages.push({ role: 'user', content: userMessage })
 
@@ -122,7 +150,7 @@ export class ChatCore {
     if (typeof content !== 'string' || content.trim().length === 0) {
       // 某些代理/网关在异常情况下可能返回 choices=null 或空数组
       return {
-        reply: '错误：模型返回了空响应（choices 为空），请稍后重试或更换模型/Base URL。',
+        reply: modelEmptyResponseMessage(locale),
         triggers: [],
         next_api_call_seconds: settings.proactiveInterval || DEFAULT_PROACTIVE_INTERVAL,
         important_info: [],
@@ -143,42 +171,92 @@ export class ChatCore {
     }
     resultText = resultText.trim()
 
-    const safeParse = (text: string): any => {
-      // 1) 直接解析
+    return this.parseModelContentToResponse(
+      resultText,
+      settings.proactiveInterval || DEFAULT_PROACTIVE_INTERVAL
+    )
+  }
+
+  /**
+   * 将模型输出解析为 AIResponse。模型可能返回纯自然语言、带前缀的 JSON、或畸形结构；
+   * 任意解析失败时降级为整段原文作为 reply，不向调用方抛 JSON异常。
+   */
+  private parseModelContentToResponse(
+    resultText: string,
+    fallbackInterval: number
+  ): AIResponse {
+    const fallback = (): AIResponse => ({
+      reply: resultText,
+      triggers: [],
+      next_api_call_seconds: fallbackInterval,
+      important_info: [],
+    })
+
+    const tryParseJson = (text: string): unknown => {
       try {
         return JSON.parse(text)
-      } catch {}
-      // 2) 提取第一段 {...}（模型偶发输出解释文字）
+      } catch {
+        /* ignore */
+      }
       const start = text.indexOf('{')
       const end = text.lastIndexOf('}')
-      if (start !== -1 && end !== -1 && end > start) {
-        const slice = text.slice(start, end + 1)
-        try {
-          return JSON.parse(slice)
-        } catch {}
+      if (start === -1 || end === -1 || end <= start) return null
+      try {
+        return JSON.parse(text.slice(start, end + 1))
+      } catch {
+        return null
       }
-      return null
     }
 
-    const result = safeParse(resultText)
-    if (!result) {
-      // 降级：不阻断对话（避免 “Unexpected token … is not valid JSON”）
-      return {
-        reply: resultText,
-        triggers: [],
-        next_api_call_seconds: settings.proactiveInterval || DEFAULT_PROACTIVE_INTERVAL,
-        important_info: [],
+    const raw = tryParseJson(resultText)
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+      return fallback()
+    }
+
+    const o = raw as Record<string, unknown>
+
+    let reply = ''
+    if (typeof o.reply === 'string') {
+      reply = o.reply
+    } else if (o.reply != null) {
+      reply = String(o.reply)
+    }
+
+    const triggers: Trigger[] = []
+    if (Array.isArray(o.triggers)) {
+      for (const t of o.triggers) {
+        if (
+          t !== null &&
+          typeof t === 'object' &&
+          !Array.isArray(t) &&
+          typeof (t as Trigger).seconds === 'number' &&
+          typeof (t as Trigger).message === 'string'
+        ) {
+          triggers.push({
+            seconds: (t as Trigger).seconds,
+            message: (t as Trigger).message,
+          })
+        }
       }
     }
+
+    const important_info = Array.isArray(o.important_info)
+      ? o.important_info.filter((x): x is string => typeof x === 'string')
+      : []
+
+    const nextRaw = o.next_api_call_seconds
+    const next_api_call_seconds =
+      typeof nextRaw === 'number' &&
+      Number.isFinite(nextRaw) &&
+      nextRaw > 0
+        ? Math.floor(nextRaw)
+        : fallbackInterval
 
     return {
-      reply: result.reply || '',
-      triggers: result.triggers || [],
-      next_api_call_seconds:
-        result.next_api_call_seconds ||
-        settings.proactiveInterval ||
-        DEFAULT_PROACTIVE_INTERVAL,
-      important_info: result.important_info || [],
+      reply,
+      triggers,
+      next_api_call_seconds,
+      important_info,
     }
   }
 
@@ -189,7 +267,8 @@ export class ChatCore {
     systemPrompt: string,
     history: ChatMessage[],
     importantInfo: string[],
-    recentMessagesCount: number = 3
+    recentMessagesCount: number = 3,
+    locale: ReturnType<typeof normalizeLocale> = 'zh-CN'
   ) {
     const messages: OpenAI.Chat.ChatCompletionMessageParam[] = []
 
@@ -200,7 +279,7 @@ export class ChatCore {
     if (importantInfo.length > 0) {
       messages.push({
         role: 'system',
-        content: `[用户重要信息] ${importantInfo.join('; ')}`,
+        content: `${getImportantInfoSystemPrefix(locale)}${importantInfo.join('; ')}`,
       })
     }
 

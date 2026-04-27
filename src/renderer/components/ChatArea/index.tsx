@@ -1,4 +1,4 @@
-import { Sparkles, User } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import { useChatStore } from '@/stores/chatStore'
 import { useConversationStore } from '@/stores/conversationStore'
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -6,8 +6,10 @@ import { formatDate } from '@/utils/helpers'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { cn } from '@/lib/utils'
 import { getMessages } from '@/api'
+import { MarkdownView } from '@/components/markdown/MarkdownView'
 
 export default function ChatArea() {
+  const { t } = useTranslation()
   const { messages, isLoading, updateMessages } = useChatStore()
   const { currentConversationId } = useConversationStore()
   const bottomRef = useRef<HTMLDivElement>(null)
@@ -61,17 +63,17 @@ export default function ChatArea() {
   if (!currentConversationId) {
     return (
       <ScrollArea
-        className="flex-1 px-4 md:px-0 py-8"
+        className="flex-1 px-4 py-8 md:px-6 lg:px-8"
         viewportRef={viewportRef}
         onViewportScroll={updateAtBottom}
       >
         <div className="max-w-3xl mx-auto space-y-8 pb-32">
           <div className="mt-20 space-y-8">
             <h1 className="text-5xl font-medium bg-gradient-to-r from-blue-400 via-purple-400 to-red-400 bg-clip-text text-transparent">
-              你好，我是 ProactiveAI
+              {t('chat.heroTitle')}
             </h1>
             <p className="text-2xl font-medium text-[var(--app-muted)]">
-              今天我可以帮你做些什么？
+              {t('chat.heroSubtitle')}
             </p>
           </div>
         </div>
@@ -81,7 +83,7 @@ export default function ChatArea() {
 
   return (
     <ScrollArea
-      className="flex-1 px-4 md:px-0 py-8"
+      className="flex-1 px-4 py-8 md:px-6 lg:px-8"
       viewportRef={viewportRef}
       onViewportScroll={updateAtBottom}
       onPointerDown={updateAtBottom}
@@ -90,41 +92,40 @@ export default function ChatArea() {
       <div className="max-w-3xl mx-auto space-y-8 pb-32">
         {currentMessages.length === 0 && (
           <div className="mt-16 space-y-3">
-            <h2 className="text-2xl font-medium text-[var(--app-fg)]">开始新的对话</h2>
-            <p className="text-sm text-[var(--app-muted)]">在下方输入框发送第一条消息。</p>
+            <h2 className="text-2xl font-medium text-[var(--app-fg)]">{t('chat.emptyHeading')}</h2>
+            <p className="text-sm text-[var(--app-muted)]">{t('chat.emptyHint')}</p>
           </div>
         )}
         {currentMessages.map((msg) => (
-          <div key={msg.id} className={cn("flex gap-6", msg.role === 'user' ? 'justify-end' : '')}>
-            {msg.role === 'assistant' && (
-              <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center shrink-0">
-                <Sparkles size={18} className="text-white" />
-              </div>
-            )}
-            <div className={cn("max-w-[80%] space-y-1", msg.role === 'user' ? 'rounded-3xl bg-[var(--app-user-bubble)] p-4' : '')}>
-              <p className="whitespace-pre-wrap leading-relaxed text-[var(--app-fg)]">
-                {msg.content}
-              </p>
+          <div
+            key={msg.id}
+            className={cn('flex w-full', msg.role === 'user' ? 'justify-end' : 'justify-start')}
+          >
+            <div
+              className={cn(
+                'max-w-[min(85%,42rem)] space-y-1',
+                msg.role === 'user' ? 'rounded-3xl bg-[var(--app-user-bubble)] p-4' : ''
+              )}
+            >
+              {msg.role === 'assistant' ? (
+                <MarkdownView content={msg.content} />
+              ) : (
+                <p className="whitespace-pre-wrap leading-relaxed text-[var(--app-fg)]">
+                  {msg.content}
+                </p>
+              )}
               <span className="mt-2 block text-[10px] uppercase text-[var(--app-muted)] opacity-60">
                 {formatDate(msg.createdAt)}
               </span>
             </div>
-            {msg.role === 'user' && (
-              <div className="w-8 h-8 rounded-full bg-gray-600 flex items-center justify-center shrink-0">
-                <User size={18} className="text-white" />
-              </div>
-            )}
           </div>
         ))}
         {isLoading && (
-          <div className="flex gap-6">
-            <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center shrink-0">
-              <Sparkles size={18} className="text-white" />
-            </div>
-            <div className="flex items-center gap-1">
-              <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-              <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-              <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+          <div className="flex w-full justify-start">
+            <div className="flex items-center gap-1 py-2">
+              <div className="h-2 w-2 animate-bounce rounded-full bg-gray-400" style={{ animationDelay: '0ms' }} />
+              <div className="h-2 w-2 animate-bounce rounded-full bg-gray-400" style={{ animationDelay: '150ms' }} />
+              <div className="h-2 w-2 animate-bounce rounded-full bg-gray-400" style={{ animationDelay: '300ms' }} />
             </div>
           </div>
         )}

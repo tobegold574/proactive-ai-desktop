@@ -102,7 +102,7 @@ Electron userData/
 点击全局设置 → 打开全局设置面板
 ```
 
-> 现状：侧边栏已实现「收缩/展开」「新对话」「最近对话」「对话重命名/删除」「设置」。**对话搜索**、**插件市场/插件配置**、**完整模板管理入口**目前未实现（插件相关**暂不开发**，见下文「实现进度」）。
+> 现状：侧边栏已实现「收缩/展开」「新对话」「最近对话」「对话重命名/删除」「设置」。**对话搜索**、**完整模板管理入口**目前未实现。**社区深链与资源包导入**、**插件运行时与市场**的工程方案见 `doc/社区对接.md`、`doc/插件市场.md`（分里程碑实现，非本文「已实现」范围）。
 
 ***
 
@@ -115,7 +115,8 @@ Electron userData/
 | apiKey                   | string                           | API 密钥       |
 | model                    | string                           | 模型名称         |
 | baseURL                  | string (可选)                      | API 基础URL    |
-| defaultTemplateName      | string (可选)                      | 默认提示词模板名     |
+| locale                   | "zh-CN" \| "en-US" (可选)          | 界面与下发系统提示语言，默认 zh-CN |
+| defaultTemplateName      | string (可选)                      | 默认模板引用（内置为 `builtin_*`，见 template-migration） |
 | defaultMaxTriggers       | number (可选)                      | 默认最大触发点数量    |
 | defaultProactiveInterval | number (可选)                      | 默认主动对话间隔（秒）  |
 | proactiveEnabled         | boolean (可选)                     | 全局默认是否启用主动对话 |
@@ -185,6 +186,7 @@ Electron userData/
 | 字段               | 类型                                                            | 说明      |
 | ---------------- | ------------------------------------------------------------- | ------- |
 | onMessageSend    | (message: string) => string \| Promise\<string> (可选)          | 消息发送前钩子 |
+| onSystemPromptBuild | (input: { systemPrompt, locale?, conversationId? }) => string \| void \| Promise\<…> (可选) | 构造发给模型的 system prompt 时追加片段（如像素小人协议） |
 | onMessageReceive | (reply: string) => string \| Promise\<string> (可选)            | 消息接收后钩子 |
 | onTrigger        | (trigger: Trigger) => void \| Promise\<void> (可选)             | 触发点钩子   |
 | onMemoryUpdate   | (importantInfo: string\[]) => void \| Promise\<void> (可选)     | 记忆更新钩子  |
@@ -203,7 +205,7 @@ Electron userData/
 | hooks       | PluginHooks               | 插件钩子 |
 | config      | Record\<string, any> (可选) | 插件配置 |
 
-> **实现状态**：`Plugin` / `PluginHooks` 仅在 `shared/types` 中作为协议占位；**无插件市场、无加载与钩子运行时**，近期不纳入开发范围。
+> **实现状态**：`Plugin` / `PluginHooks` 在 `shared/types` 中为协议定义；**主进程已加载内置 `PluginRegistry`**，IPC **`plugins:list`** / **`plugins:setEnabled`** 与设置页插件区 **已接**。当前内置插件 **仅 `com.proactiveai.pavatar`**（详见 **`doc/插件市场.md`**、**`doc/像素小人插件.md`**）。远程市场 / 动态 `.paplugin` **未做**。
 
 ***
 
@@ -217,7 +219,8 @@ Electron userData/
 | 对话级配置 | `ConversationSettings` 面板 | **类型与主进程 send 逻辑支持**部分字段；**无独立「每会话设置」UI**（如按会话选模板） |
 | 模板 | 完整模板管理面板 | **下拉（自定义行右侧删）+ 新增**；**无**编辑 UI / 独立大面板 |
 | 侧边栏 | 搜索、插件入口 | **未做**；核心导航与对话操作已齐 |
-| 插件生态 | README / Types 中的插件 | **仅类型定义**，**插件市场不做**（当前里程碑不实现） |
+| 插件生态 | `Plugin` / `PluginHooks` + 内置插件 | **已接**：主进程 `PluginRegistry`、`chat:send` 钩子链、IPC `plugins:*`、设置页插件区；详见 **`doc/插件市场.md`**（远程市场 / `.paplugin` 未做） |
+| 社区对接 | Web 社区与桌面联动 | **未实现**；方案见 **`doc/社区对接.md`**（深链、`.pabundle`、可选 OAuth） |
 | 其它配置 | `fontSize` | 配置项存在，**未绑定界面字号** |
 
 ### 消息与滚动（实现细节，原 UX 流程未写清）
@@ -264,7 +267,7 @@ IPC:响应 → 渲染进程 → 显示消息
     ↓ 不存在?
 全局配置 → GlobalSettings.defaultTemplateName
     ↓ 不存在?
-默认值 → "default"（系统内置模板）
+默认值 → `builtin_default`（系统内置模板，见 `template-migration`）
 ```
 
 ### 模板初始化
