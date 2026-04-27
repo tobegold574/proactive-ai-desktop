@@ -4,8 +4,6 @@ import { useConfigStore } from '@/stores/configStore'
 import {
   GlobalSettings,
   PromptTemplate,
-  migrateTemplateRef,
-  DEFAULT_TEMPLATE_NAME,
 } from '@shared'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
